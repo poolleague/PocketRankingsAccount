@@ -10,7 +10,19 @@ Owns:
   product/tier, and where that access came from. Full contract in
   `PocketRankingsPlatform/PLATFORM_AGENTS.md`, Section 2.
 
+## Structure
+
+Matches `PoolLeagueWeb`'s layout: the actual project lives under
+`src/PocketRankingsAccount/`, with `docs/` and `tests/` at repo root.
+
 ## Status
 
-Scaffolding only — no runtime code yet. See `AGENTS.md` for repo-specific
-rules; platform-wide rules live in `PocketRankingsPlatform`.
+Model layer implemented — `Person`, `PersonCredential`, `PersonSession`,
+`Entitlement`, `IssuedIdentityToken`, `AccountAuditLogEntry` in
+`src/PocketRankingsAccount/Models/AccountModels.cs`, matching
+`PLATFORM_AGENTS.md` Section 2 field-for-field.
+
+Not yet implemented: `Program.cs`/hosting, controllers, services, actual
+database access. These are next-session work, per owner approval, per
+`PLATFORM_AGENTS.md` Section 8. See `AGENTS.md` for repo-specific rules;
+platform-wide rules live in `PocketRankingsPlatform`.
