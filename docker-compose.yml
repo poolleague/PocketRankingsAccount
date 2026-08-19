@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pocketrankingsaccount}
+      POSTGRES_USER: ${POSTGRES_USER:-pocketrankingsaccount}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-long-random-password-before-launch}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pocketrankingsaccount} -d ${POSTGRES_DB:-pocketrankingsaccount}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  pocketrankingsaccount:
+    build:
+      context: .
+      dockerfile: src/PocketRankingsAccount/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__PostgresDatabase: Host=postgres;Port=5432;Database=${POSTGRES_DB:-pocketrankingsaccount};Username=${POSTGRES_USER:-pocketrankingsaccount};Password=${POSTGRES_PASSWORD:-change-this-long-random-password-before-launch}
+    ports:
+      # Host port mapping is for local dev/testing convenience only, while
+      # nothing else routes to this service yet. PoolLeagueWeb's own app
+      # container uses `expose:` only, relying entirely on Caddy -- once
+      # Caddy joins this project's network to route
+      # account.pocketrankings.com here (PLATFORM_AGENTS.md Section 1 open
+      # item), reconsider switching this to `expose:` only to match.
+      - "${HOST_PORT:-8081}:8080"
+
+# No networks: block defined on purpose. Compose creates one default
+# network scoped to just this file's services, which is what gives Account
+# its own subnet, separate from PoolLeagueWeb's -- see PLATFORM_AGENTS.md
+# Section 1.
+volumes:
+  postgres_data:

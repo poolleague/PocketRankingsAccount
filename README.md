@@ -15,14 +15,26 @@ Owns:
 Matches `PoolLeagueWeb`'s layout: the actual project lives under
 `src/PocketRankingsAccount/`, with `docs/` and `tests/` at repo root.
 
+## Running locally
+
+```
+cp .env.example .env    # then edit the values
+docker compose up --build
+curl http://localhost:8081/health
+```
+
 ## Status
 
-Model layer implemented — `Person`, `PersonCredential`, `PersonSession`,
-`Entitlement`, `IssuedIdentityToken`, `AccountAuditLogEntry` in
-`src/PocketRankingsAccount/Models/AccountModels.cs`, matching
-`PLATFORM_AGENTS.md` Section 2 field-for-field.
+Hosting pipeline running: `Program.cs`, a placeholder `HomeController`, and
+`/health`. Its own `docker-compose.yml` runs Account as an isolated Compose
+project with its own PostgreSQL instance and its own Docker network,
+separate from `PoolLeagueWeb`'s, per `PLATFORM_AGENTS.md` Section 1.
 
-Not yet implemented: `Program.cs`/hosting, controllers, services, actual
-database access. These are next-session work, per owner approval, per
-`PLATFORM_AGENTS.md` Section 8. See `AGENTS.md` for repo-specific rules;
-platform-wide rules live in `PocketRankingsPlatform`.
+Not yet implemented: cookie authentication, `AccountRepository` (real
+Postgres access), identity token issuance. See `AGENTS.md` for why those
+are deliberately deferred rather than stubbed.
+
+Not yet wired: Caddy routing / public DNS. This container is reachable
+today only via the local port mapping in `docker-compose.yml`, not
+publicly. That remains an explicit open decision — see
+`PLATFORM_AGENTS.md` Section 1.
