@@ -1,0 +1,16 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+appsettings.Development.json
+appsettings.*.local.json
+
+## Docker / secrets
+.env
+*.env
+
+## OS
+.DS_Store
+Thumbs.db
