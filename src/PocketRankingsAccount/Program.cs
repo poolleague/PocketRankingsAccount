@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
+using PocketRankingsAccount.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,19 +25,30 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
-// Deliberately NOT wired up yet -- do not add without a proposal per
+// Singleton, matching PoolLeagueWeb's builder.Services.AddSingleton<LeagueRepository>().
+// AccountRepository opens its own NpgsqlConnection per method call rather
+// than holding one open connection for the app's lifetime, so a singleton
+// is safe here -- there's no per-request state to isolate.
+builder.Services.AddSingleton<AccountRepository>();
+
+// Still deliberately NOT wired up -- do not add without a proposal per
 // PLATFORM_AGENTS.md Section 8:
 //   - Cookie authentication / session validation. PoolLeagueWeb ties this
 //     to SecurityFoundationService.ValidateSession; Account needs its own
-//     equivalent service, checking real PersonCredential/PersonSession
-//     rows, which in turn needs AccountRepository (Postgres access) to
-//     exist first. Wiring a cookie scheme with nothing real behind it
-//     would be worse than not having one.
+//     equivalent service that calls AccountRepository to check real
+//     PersonCredential/PersonSession rows. The repository now exists, but
+//     the service that uses it for auth does not yet.
 //   - Identity token issuance/signing -- same dependency.
-// ConnectionStrings__PostgresDatabase is already defined in
-// docker-compose.yml and ready to read; nothing consumes it yet.
 
 var app = builder.Build();
+
+// DI singletons are lazy -- nothing constructs AccountRepository (and runs
+// its startup schema creation) until something requests one. No controller
+// depends on it yet, so without this line the schema would silently never
+// get created. Resolving it here once, eagerly, matches PoolLeagueWeb's
+// documented "startup creates the schema-owned tables automatically"
+// behavior (see POSTGRES_SCHEMA_LAYOUT.md) instead of only promising it.
+app.Services.GetRequiredService<AccountRepository>();
 
 app.UseForwardedHeaders();
 

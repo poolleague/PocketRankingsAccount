@@ -25,14 +25,16 @@ curl http://localhost:8081/health
 
 ## Status
 
-Hosting pipeline running: `Program.cs`, a placeholder `HomeController`, and
-`/health`. Its own `docker-compose.yml` runs Account as an isolated Compose
-project with its own PostgreSQL instance and its own Docker network,
-separate from `PoolLeagueWeb`'s, per `PLATFORM_AGENTS.md` Section 1.
+Hosting pipeline running, with real PostgreSQL persistence
+(`AccountRepository`) behind it. `docker-compose.yml` runs Account as an
+isolated Compose project with its own PostgreSQL instance and its own
+Docker network, separate from `PoolLeagueWeb`'s, per `PLATFORM_AGENTS.md`
+Section 1. Startup creates the schema (`idn`, `secu`, `data`) and tables
+automatically, matching `PoolLeagueWeb`'s documented behavior.
 
-Not yet implemented: cookie authentication, `AccountRepository` (real
-Postgres access), identity token issuance. See `AGENTS.md` for why those
-are deliberately deferred rather than stubbed.
+Not yet implemented: cookie authentication, identity token issuance/signing
+service. `AccountRepository` exists and is registered in DI, but nothing
+calls it from a real auth flow yet -- see `AGENTS.md`.
 
 Not yet wired: Caddy routing / public DNS. This container is reachable
 today only via the local port mapping in `docker-compose.yml`, not
