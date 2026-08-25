@@ -1,0 +1,39 @@
+@model SignupViewModel
+<!--
+    Intentionally minimal and unstyled -- see the comment in Login.cshtml
+    for why. Proves the signup flow works end to end, not a finished page.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Create Account - Pocket Rankings Account</title>
+</head>
+<body>
+    <h1>Create Account</h1>
+
+    @if (!string.IsNullOrEmpty(Model.Error))
+    {
+        <p style="color:#b00020">@Model.Error</p>
+    }
+
+    <form asp-action="Signup" method="post">
+        <div>
+            <label asp-for="DisplayName"></label><br />
+            <input asp-for="DisplayName" autofocus autocomplete="name" />
+        </div>
+        <div>
+            <label asp-for="UserName"></label><br />
+            <input asp-for="UserName" autocomplete="username" />
+        </div>
+        <div>
+            <label asp-for="Password"></label><br />
+            <input asp-for="Password" type="password" autocomplete="new-password" />
+            <p><small>At least @PasswordService.MinimumPasswordLength characters.</small></p>
+        </div>
+        <button type="submit">Create Account</button>
+    </form>
+
+    <p><a asp-action="Login">Already have an account? Sign in</a></p>
+</body>
+</html>

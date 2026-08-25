@@ -49,11 +49,13 @@ public class PersonCredential
     public long SecurityGeneration { get; set; } = 1;
 }
 
-// A single active login session for a Person on the Account site itself,
-// mirroring the single-active-session enforcement already used by
-// PoolLeagueWeb's SecurityFoundationService. This is separate from the
-// short-lived cross-product identity token issued to other products
-// (see IssuedIdentityToken below).
+// A single login session for a Person. Unlike PoolLeagueWeb's
+// SecurityFoundationService, this does NOT enforce single-active-session --
+// that policy fits League's shared-terminal context; Account is a general
+// identity provider where multi-device login (phone + laptop) is normal
+// and expected. A person may have several concurrent, valid sessions.
+// Separate from the short-lived cross-product identity token issued to
+// other products (see IssuedIdentityToken below).
 public class PersonSession
 {
     public int Id { get; set; }
@@ -62,6 +64,13 @@ public class PersonSession
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastActivityAt { get; set; } = DateTime.UtcNow;
     public DateTime? RevokedAt { get; set; }
+    // Bound to PersonCredential.SecurityGeneration at creation time. A
+    // session is only valid while this still matches the credential's
+    // CURRENT generation -- bumping the credential's generation (password
+    // change, suspected compromise) instantly invalidates every session
+    // created under the old value, matching how PoolLeagueWeb ties
+    // account_sessions.security_generation to login_accounts.
+    public long SecurityGeneration { get; set; } = 1;
 }
 
 // Keep product and source names in one place, matching the AccountRoles

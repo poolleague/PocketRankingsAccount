@@ -25,6 +25,16 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       ConnectionStrings__PostgresDatabase: Host=postgres;Port=5432;Database=${POSTGRES_DB:-pocketrankingsaccount};Username=${POSTGRES_USER:-pocketrankingsaccount};Password=${POSTGRES_PASSWORD:-change-this-long-random-password-before-launch}
+      # Required for login/signup/sessions to work at all -- see
+      # .env.example for how to generate one. Empty by default so a
+      # misconfigured deployment fails loudly (a startup warning, then an
+      # exception on first use) rather than silently running with a weak
+      # default key.
+      Security__FoundationHashKey: ${ACCOUNT_SECURITY_FOUNDATION_HASH_KEY:-}
+      # Optional. Without it, identity token signing uses an ephemeral
+      # in-memory key that changes every restart -- fine for local dev,
+      # not for Production. See AccountSecurityFoundationService.cs.
+      Security__TokenSigningPrivateKeyPem: ${ACCOUNT_TOKEN_SIGNING_PRIVATE_KEY_PEM:-}
     ports:
       # Host port mapping is for local dev/testing convenience only, while
       # nothing else routes to this service yet. PoolLeagueWeb's own app

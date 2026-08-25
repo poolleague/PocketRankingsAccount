@@ -55,6 +55,20 @@ public class AccountRepository
             CREATE SCHEMA IF NOT EXISTS secu;
             CREATE SCHEMA IF NOT EXISTS data;
 
+            -- Id-allocation sequences for the app-assigned-PK tables below.
+            -- These are standalone sequences, NOT ""GENERATED AS IDENTITY""
+            -- on the column itself -- that was tried in an earlier version
+            -- of this file and was a real bug (see AGENTS.md/commit
+            -- history): an explicit NULL does not trigger identity
+            -- generation, only an omitted column or the DEFAULT keyword
+            -- does, and the whole-list Save() upsert path always passes an
+            -- explicit id. A standalone sequence gives atomic, race-free id
+            -- allocation for the new single-row Create* methods below
+            -- without touching that already-working upsert path at all.
+            CREATE SEQUENCE IF NOT EXISTS idn.people_id_seq;
+            CREATE SEQUENCE IF NOT EXISTS secu.person_credentials_id_seq;
+            CREATE SEQUENCE IF NOT EXISTS secu.person_sessions_id_seq;
+
             -- Plain integer PK, not GENERATED AS IDENTITY -- matching
             -- League's secu.login_accounts. Callers must assign a unique,
             -- non-zero Id before adding a new Person to AccountState and
@@ -92,6 +106,14 @@ public class AccountRepository
             -- models pass if byte-for-byte parity with League matters more
             -- than the current model shape.
             -- Same app-assigned-id contract as idn.people above.
+            -- security_generation is bound to
+            -- secu.person_credentials.security_generation at creation time;
+            -- a session is only valid while the two still match, matching
+            -- how PoolLeagueWeb ties account_sessions.security_generation
+            -- to login_accounts.security_generation. This does NOT enforce
+            -- single-active-session -- see the comment on the
+            -- PersonSession model for why Account deliberately differs
+            -- from League there.
             CREATE TABLE IF NOT EXISTS secu.person_sessions
             (
                 id integer PRIMARY KEY,
@@ -100,6 +122,7 @@ public class AccountRepository
                 created_at timestamp with time zone NOT NULL DEFAULT NOW(),
                 last_activity_at timestamp with time zone NOT NULL DEFAULT NOW(),
                 revoked_at timestamp with time zone NULL,
+                security_generation bigint NOT NULL DEFAULT 1 CHECK (security_generation >= 1),
                 CHECK (revoked_at IS NULL OR revoked_at >= created_at)
             );
 
@@ -315,7 +338,7 @@ public class AccountRepository
         var sessions = new List<PersonSession>();
         using var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, person_record_id, session_token, created_at, last_activity_at, revoked_at
+            SELECT id, person_record_id, session_token, created_at, last_activity_at, revoked_at, security_generation
             FROM secu.person_sessions
             ORDER BY id;";
         using var reader = command.ExecuteReader();
@@ -328,7 +351,8 @@ public class AccountRepository
                 SessionToken = ReadString(reader, "session_token"),
                 CreatedAt = ReadDateTime(reader, "created_at") ?? DateTime.UtcNow,
                 LastActivityAt = ReadDateTime(reader, "last_activity_at") ?? DateTime.UtcNow,
-                RevokedAt = ReadDateTime(reader, "revoked_at")
+                RevokedAt = ReadDateTime(reader, "revoked_at"),
+                SecurityGeneration = Convert.ToInt64(reader["security_generation"])
             });
         }
         return sessions;
@@ -340,10 +364,10 @@ public class AccountRepository
         {
             using var command = NewCommand(connection, transaction, @"
                 INSERT INTO secu.person_sessions (
-                    id, person_record_id, session_token, created_at, last_activity_at, revoked_at
+                    id, person_record_id, session_token, created_at, last_activity_at, revoked_at, security_generation
                 )
                 VALUES (
-                    @id, @person_record_id, @session_token, @created_at, @last_activity_at, @revoked_at
+                    @id, @person_record_id, @session_token, @created_at, @last_activity_at, @revoked_at, @security_generation
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     last_activity_at = EXCLUDED.last_activity_at,
@@ -354,6 +378,7 @@ public class AccountRepository
             Add(command, "@created_at", session.CreatedAt);
             Add(command, "@last_activity_at", session.LastActivityAt);
             Add(command, "@revoked_at", session.RevokedAt);
+            Add(command, "@security_generation", Math.Max(1, session.SecurityGeneration));
             command.ExecuteNonQuery();
         }
     }
@@ -533,6 +558,342 @@ public class AccountRepository
             entry.Id = Convert.ToInt32(newId);
             entry.IsPersisted = true;
         }
+    }
+
+    // ---- Targeted methods for the auth loop -----------------------------
+    //
+    // Everything above (Get/Save) loads or upserts the WHOLE list -- fine
+    // for admin/debug visibility, wrong for per-request work like "does
+    // this session hash exist and is it valid". These mirror
+    // LeagueRepository.Security.cs's targeted, single-query methods
+    // instead: one indexed lookup, not "load everything, search in
+    // memory". id allocation uses the sequences created in
+    // EnsurePostgresStore, matching this repository's existing
+    // app-assigned-id contract for these tables rather than reopening that
+    // design.
+
+    public Person CreatePerson(string displayName)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var transaction = connection.BeginTransaction();
+
+        var newId = (int)(long)NewCommand(connection, transaction,
+            "SELECT nextval('idn.people_id_seq');").ExecuteScalar()!;
+        var person = new Person
+        {
+            Id = newId,
+            PersonId = Guid.NewGuid(),
+            DisplayName = displayName,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        using (var command = NewCommand(connection, transaction, @"
+            INSERT INTO idn.people (id, person_id, display_name, is_active, created_at)
+            VALUES (@id, @person_id, @display_name, @is_active, @created_at);"))
+        {
+            Add(command, "@id", person.Id);
+            Add(command, "@person_id", person.PersonId);
+            Add(command, "@display_name", person.DisplayName);
+            Add(command, "@is_active", person.IsActive);
+            Add(command, "@created_at", person.CreatedAt);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return person;
+    }
+
+    public PersonCredential CreateCredential(int personRecordId, string userName, string passwordHash)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var transaction = connection.BeginTransaction();
+
+        var newId = (int)(long)NewCommand(connection, transaction,
+            "SELECT nextval('secu.person_credentials_id_seq');").ExecuteScalar()!;
+        var credential = new PersonCredential
+        {
+            Id = newId,
+            PersonRecordId = personRecordId,
+            UserName = userName,
+            PasswordHash = passwordHash,
+            SecurityGeneration = 1
+        };
+
+        using (var command = NewCommand(connection, transaction, @"
+            INSERT INTO secu.person_credentials (id, person_record_id, user_name, password_hash, security_generation)
+            VALUES (@id, @person_record_id, @user_name, @password_hash, @security_generation);"))
+        {
+            Add(command, "@id", credential.Id);
+            Add(command, "@person_record_id", credential.PersonRecordId);
+            Add(command, "@user_name", credential.UserName);
+            Add(command, "@password_hash", credential.PasswordHash);
+            Add(command, "@security_generation", credential.SecurityGeneration);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return credential;
+    }
+
+    // user_name uniqueness relies on the UNIQUE constraint in the DDL above;
+    // this is a plain lookup, not itself a race-free "claim this username"
+    // operation -- CreateCredential's INSERT is what actually enforces
+    // uniqueness (it throws on conflict), so the caller (Signup) must
+    // handle that exception, not rely on checking-then-inserting.
+    public PersonCredential? GetCredentialByUserName(string userName)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT id, person_record_id, user_name, password_hash, must_change_password,
+                   failed_login_count, lockout_until, last_password_changed_at, security_generation
+            FROM secu.person_credentials
+            WHERE user_name = @user_name;";
+        Add(command, "@user_name", userName);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new PersonCredential
+        {
+            Id = ReadInt(reader, "id"),
+            PersonRecordId = ReadInt(reader, "person_record_id"),
+            UserName = ReadString(reader, "user_name"),
+            PasswordHash = ReadString(reader, "password_hash"),
+            MustChangePassword = ReadBool(reader, "must_change_password"),
+            FailedLoginCount = ReadInt(reader, "failed_login_count"),
+            LockoutUntil = ReadDateTime(reader, "lockout_until"),
+            LastPasswordChangedAt = ReadDateTime(reader, "last_password_changed_at"),
+            SecurityGeneration = Convert.ToInt64(reader["security_generation"])
+        };
+    }
+
+    public Person? GetPersonById(int id)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id, person_id, display_name, is_active, created_at FROM idn.people WHERE id = @id;";
+        Add(command, "@id", id);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new Person
+        {
+            Id = ReadInt(reader, "id"),
+            PersonId = ReadGuid(reader, "person_id"),
+            DisplayName = ReadString(reader, "display_name"),
+            IsActive = ReadBool(reader, "is_active", true),
+            CreatedAt = ReadDateTime(reader, "created_at") ?? DateTime.UtcNow
+        };
+    }
+
+    public Person? GetPersonByPersonId(Guid personId)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id, person_id, display_name, is_active, created_at FROM idn.people WHERE person_id = @person_id;";
+        Add(command, "@person_id", personId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new Person
+        {
+            Id = ReadInt(reader, "id"),
+            PersonId = ReadGuid(reader, "person_id"),
+            DisplayName = ReadString(reader, "display_name"),
+            IsActive = ReadBool(reader, "is_active", true),
+            CreatedAt = ReadDateTime(reader, "created_at") ?? DateTime.UtcNow
+        };
+    }
+
+    // Atomic increment-then-maybe-lock in one UPDATE, matching
+    // LeagueRepository.cs's failed_login_count CASE pattern -- avoids a
+    // read-then-write race between concurrent failed attempts.
+    public void RecordFailedLogin(int credentialId, int lockoutThreshold, TimeSpan lockoutDuration, DateTime now)
+    {
+        var threshold = Math.Max(1, lockoutThreshold);
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            UPDATE secu.person_credentials
+            SET failed_login_count = CASE
+                    WHEN failed_login_count + 1 >= @threshold THEN 0
+                    ELSE failed_login_count + 1
+                END,
+                lockout_until = CASE
+                    WHEN failed_login_count + 1 >= @threshold THEN @lockout_until
+                    ELSE lockout_until
+                END
+            WHERE id = @id;";
+        Add(command, "@threshold", threshold);
+        Add(command, "@lockout_until", now.Add(lockoutDuration));
+        Add(command, "@id", credentialId);
+        command.ExecuteNonQuery();
+    }
+
+    public void ResetLoginFailures(int credentialId)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            UPDATE secu.person_credentials
+            SET failed_login_count = 0,
+                lockout_until = NULL
+            WHERE id = @id
+              AND (failed_login_count <> 0 OR lockout_until IS NOT NULL);";
+        Add(command, "@id", credentialId);
+        command.ExecuteNonQuery();
+    }
+
+    // Bumping the generation instantly invalidates every session created
+    // under the old value, since ValidateAndTouchSession below requires an
+    // exact match -- real "log out everywhere" capability, matching
+    // PoolLeagueWeb's use of login_accounts.security_generation.
+    public void BumpCredentialSecurityGeneration(int credentialId)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE secu.person_credentials SET security_generation = security_generation + 1 WHERE id = @id;";
+        Add(command, "@id", credentialId);
+        command.ExecuteNonQuery();
+    }
+
+    public PersonSession CreateSession(int personRecordId, string sessionTokenHash, long securityGeneration, DateTime now)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var transaction = connection.BeginTransaction();
+
+        var newId = (int)(long)NewCommand(connection, transaction,
+            "SELECT nextval('secu.person_sessions_id_seq');").ExecuteScalar()!;
+        var session = new PersonSession
+        {
+            Id = newId,
+            PersonRecordId = personRecordId,
+            SessionToken = sessionTokenHash,
+            CreatedAt = now,
+            LastActivityAt = now,
+            SecurityGeneration = securityGeneration
+        };
+
+        using (var command = NewCommand(connection, transaction, @"
+            INSERT INTO secu.person_sessions (id, person_record_id, session_token, created_at, last_activity_at, security_generation)
+            VALUES (@id, @person_record_id, @session_token, @created_at, @last_activity_at, @security_generation);"))
+        {
+            Add(command, "@id", session.Id);
+            Add(command, "@person_record_id", session.PersonRecordId);
+            Add(command, "@session_token", session.SessionToken);
+            Add(command, "@created_at", session.CreatedAt);
+            Add(command, "@last_activity_at", session.LastActivityAt);
+            Add(command, "@security_generation", session.SecurityGeneration);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return session;
+    }
+
+    // Single query does both the validity check AND the sliding-window
+    // refresh (bumping last_activity_at forward), matching the spirit of
+    // LeagueRepository's ValidateAccountSession CTE -- one round trip, no
+    // separate read-then-write. Returns the owning PersonRecordId if (and
+    // only if) the session is unrevoked, within the inactivity window, and
+    // still matches the credential's CURRENT security generation.
+    public int? ValidateAndTouchSession(string sessionTokenHash, TimeSpan inactivityWindow, DateTime now)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            WITH valid AS (
+                SELECT sessions.id, sessions.person_record_id
+                FROM secu.person_sessions sessions
+                JOIN secu.person_credentials credentials
+                  ON credentials.person_record_id = sessions.person_record_id
+                JOIN idn.people people
+                  ON people.id = sessions.person_record_id
+                WHERE sessions.session_token = @session_token
+                  AND sessions.revoked_at IS NULL
+                  AND sessions.last_activity_at > @cutoff
+                  AND sessions.security_generation = credentials.security_generation
+                  AND people.is_active
+                FOR UPDATE OF sessions
+            ),
+            touched AS (
+                UPDATE secu.person_sessions sessions
+                SET last_activity_at = @now
+                FROM valid
+                WHERE sessions.id = valid.id
+                RETURNING sessions.person_record_id
+            )
+            SELECT person_record_id FROM touched;";
+        Add(command, "@session_token", sessionTokenHash);
+        Add(command, "@cutoff", now.Subtract(inactivityWindow));
+        Add(command, "@now", now);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadInt(reader, "person_record_id") : null;
+    }
+
+    public void RevokeSession(string sessionTokenHash, DateTime now)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            UPDATE secu.person_sessions
+            SET revoked_at = @now
+            WHERE session_token = @session_token
+              AND revoked_at IS NULL;";
+        Add(command, "@now", now);
+        Add(command, "@session_token", sessionTokenHash);
+        command.ExecuteNonQuery();
+    }
+
+    public IssuedIdentityToken RecordIssuedToken(IssuedIdentityToken token)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            INSERT INTO idn.issued_identity_tokens (token_id, person_id, issued_at, expires_at, issued_to_product_type)
+            VALUES (@token_id, @person_id, @issued_at, @expires_at, @issued_to_product_type);";
+        Add(command, "@token_id", token.TokenId);
+        Add(command, "@person_id", token.PersonId);
+        Add(command, "@issued_at", token.IssuedAt);
+        Add(command, "@expires_at", token.ExpiresAt);
+        Add(command, "@issued_to_product_type", token.IssuedToProductType);
+        command.ExecuteNonQuery();
+        return token;
+    }
+
+    // Single-entry convenience wrapper around the same insert-only logic
+    // SyncAuditLog uses, for callers (the auth service) that want to log
+    // one event without building a whole AccountState.
+    public void AppendAuditEntry(AccountAuditLogEntry entry)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var transaction = connection.BeginTransaction();
+        SyncAuditLog(connection, transaction, new List<AccountAuditLogEntry> { entry });
+        transaction.Commit();
     }
 
     // ---- Shared helpers, matching LeagueRepository's exactly -------------

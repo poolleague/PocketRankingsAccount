@@ -18,23 +18,27 @@ Matches `PoolLeagueWeb`'s layout: the actual project lives under
 ## Running locally
 
 ```
-cp .env.example .env    # then edit the values
+cp .env.example .env    # then edit the values, especially ACCOUNT_SECURITY_FOUNDATION_HASH_KEY
 docker compose up --build
 curl http://localhost:8081/health
 ```
 
+Visit `http://localhost:8081/Account/Signup` to create an account, or
+`/Account/Login` to sign in. Without `ACCOUNT_SECURITY_FOUNDATION_HASH_KEY`
+set, both will throw.
+
 ## Status
 
-Hosting pipeline running, with real PostgreSQL persistence
-(`AccountRepository`) behind it. `docker-compose.yml` runs Account as an
-isolated Compose project with its own PostgreSQL instance and its own
-Docker network, separate from `PoolLeagueWeb`'s, per `PLATFORM_AGENTS.md`
-Section 1. Startup creates the schema (`idn`, `secu`, `data`) and tables
-automatically, matching `PoolLeagueWeb`'s documented behavior.
+Login, signup, and sessions are implemented and wired to real cookie
+authentication -- this is a working auth loop, not a stub. Identity token
+issuance (JWT, RS256) is implemented with a published verification key at
+`/.well-known/jwks.json`, though no other product verifies one yet.
 
-Not yet implemented: cookie authentication, identity token issuance/signing
-service. `AccountRepository` exists and is registered in DI, but nothing
-calls it from a real auth flow yet -- see `AGENTS.md`.
+Deliberately narrower than PoolLeagueWeb's SecurityFoundationService: no
+IP-based abuse rate-limiting, no password recovery (needs email sending,
+which doesn't exist), no single-active-session enforcement (a deliberate
+divergence, not an omission -- see AGENTS.md). See AGENTS.md for the full
+list of what's still open.
 
 Not yet wired: Caddy routing / public DNS. This container is reachable
 today only via the local port mapping in `docker-compose.yml`, not

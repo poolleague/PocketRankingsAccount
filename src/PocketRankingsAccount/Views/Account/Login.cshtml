@@ -1,0 +1,38 @@
+@model LoginViewModel
+<!--
+    Intentionally minimal and unstyled -- no UI/UX design has been done for
+    Account yet. This exists to prove the login flow works end to end, not
+    as a finished page. No shared _Layout.cshtml either, for the same
+    reason: adopting one now would mean guessing at site-wide navigation
+    and branding that hasn't been designed.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Sign In - Pocket Rankings Account</title>
+</head>
+<body>
+    <h1>Sign In</h1>
+
+    @if (!string.IsNullOrEmpty(Model.Error))
+    {
+        <p style="color:#b00020">@Model.Error</p>
+    }
+
+    <form asp-action="Login" method="post">
+        <input type="hidden" asp-for="ReturnUrl" />
+        <div>
+            <label asp-for="UserName"></label><br />
+            <input asp-for="UserName" autofocus autocomplete="username" />
+        </div>
+        <div>
+            <label asp-for="Password"></label><br />
+            <input asp-for="Password" type="password" autocomplete="current-password" />
+        </div>
+        <button type="submit">Sign In</button>
+    </form>
+
+    <p><a asp-action="Signup">Create an account</a></p>
+</body>
+</html>
