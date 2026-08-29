@@ -11,6 +11,9 @@ appsettings.*.local.json
 .env
 *.env
 
+## Claude Code (personal, local-only overrides -- not shared)
+.claude/settings.local.json
+
 ## OS
 .DS_Store
 Thumbs.db
