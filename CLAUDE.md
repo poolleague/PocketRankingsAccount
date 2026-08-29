@@ -1,8 +1,10 @@
-# AGENTS.md — PocketRankingsAccount
+# CLAUDE.md — PocketRankingsAccount (Claude Code)
 
 This repo inherits every rule in `PLATFORM_AGENTS.md`
 (`PocketRankingsPlatform` repo). This file covers only what's specific to
-Account.
+Account, and is kept word-for-word identical to `AGENTS.md` in this repo
+(Codex's copy) below this line -- add or change a rule in one, mirror it
+in the other, same commit.
 
 ## Scope of this product
 
