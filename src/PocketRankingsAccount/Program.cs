@@ -34,6 +34,9 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 // is safe here -- there's no per-request state to isolate.
 builder.Services.AddSingleton<AccountRepository>();
 builder.Services.AddSingleton<AccountSecurityFoundationService>();
+builder.Services.AddSingleton<IPlayerDataPrivacyStore>(services => services.GetRequiredService<AccountRepository>());
+builder.Services.AddSingleton<IRecentPasswordVerifier>(services => services.GetRequiredService<AccountSecurityFoundationService>());
+builder.Services.AddSingleton<PlayerDataPrivacyService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

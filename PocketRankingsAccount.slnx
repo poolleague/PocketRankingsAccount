@@ -1,0 +1,4 @@
+<Solution>
+  <Folder Name="/src/"><Project Path="src/PocketRankingsAccount/PocketRankingsAccount.csproj" /></Folder>
+  <Folder Name="/tests/"><Project Path="tests/PocketRankingsAccount.Tests/PocketRankingsAccount.Tests.csproj" /></Folder>
+</Solution>

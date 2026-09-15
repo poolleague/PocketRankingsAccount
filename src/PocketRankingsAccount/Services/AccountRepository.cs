@@ -16,7 +16,7 @@ namespace PocketRankingsAccount.Services;
 // ConnectionStrings:PostgresDatabase is required, and the constructor
 // throws if it is missing. Adding a JSON fallback later, if wanted, is a
 // separate, explicitly-flagged decision, not silently included here.
-public class AccountRepository
+public class AccountRepository : IPlayerDataPrivacyStore
 {
     private readonly string _postgresConnectionString;
 
@@ -173,7 +173,60 @@ public class AccountRepository
                 reason text NOT NULL DEFAULT '',
                 request_id text NOT NULL DEFAULT '',
                 source text NOT NULL DEFAULT ''
-            );";
+            );
+
+            CREATE TABLE IF NOT EXISTS data.player_data_preferences
+            (
+                person_id uuid PRIMARY KEY REFERENCES idn.people(person_id) ON DELETE CASCADE,
+                is_opted_out boolean NOT NULL DEFAULT false,
+                updated_at timestamp with time zone NOT NULL DEFAULT NOW(),
+                current_request_id uuid NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS data.player_data_requests
+            (
+                request_id uuid PRIMARY KEY,
+                person_id uuid NOT NULL REFERENCES idn.people(person_id) ON DELETE RESTRICT,
+                request_type text NOT NULL CHECK (request_type = 'permanent_player_data_erasure'),
+                status text NOT NULL CHECK (status IN ('processing', 'completed', 'needs_attention')),
+                requested_at timestamp with time zone NOT NULL,
+                completed_at timestamp with time zone NULL,
+                CHECK (completed_at IS NULL OR completed_at >= requested_at)
+            );
+
+            DROP INDEX IF EXISTS data.ux_active_player_data_request;
+            CREATE UNIQUE INDEX ux_active_player_data_request
+                ON data.player_data_requests(person_id)
+                WHERE status = 'processing';
+
+            CREATE TABLE IF NOT EXISTS data.player_data_request_targets
+            (
+                request_id uuid NOT NULL REFERENCES data.player_data_requests(request_id) ON DELETE RESTRICT,
+                product_type text NOT NULL CHECK (product_type IN ('league', 'tournament', 'player_profile')),
+                status text NOT NULL CHECK (status IN ('pending', 'completed', 'needs_attention')),
+                completed_at timestamp with time zone NULL,
+                PRIMARY KEY (request_id, product_type)
+            );
+
+            CREATE TABLE IF NOT EXISTS data.privacy_outbox
+            (
+                message_id uuid PRIMARY KEY,
+                request_id uuid NOT NULL REFERENCES data.player_data_requests(request_id) ON DELETE RESTRICT,
+                target_product text NOT NULL CHECK (target_product IN ('league', 'tournament', 'player_profile')),
+                event_type text NOT NULL CHECK (event_type = 'person.player_data_erasure_requested.v1'),
+                payload jsonb NOT NULL,
+                delivery_status text NOT NULL DEFAULT 'pending' CHECK (delivery_status IN ('pending', 'delivered', 'needs_attention')),
+                attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+                created_at timestamp with time zone NOT NULL DEFAULT NOW(),
+                delivered_at timestamp with time zone NULL,
+                UNIQUE (request_id, target_product)
+            );
+
+            ALTER TABLE data.player_data_preferences
+                DROP CONSTRAINT IF EXISTS fk_player_data_preferences_request;
+            ALTER TABLE data.player_data_preferences
+                ADD CONSTRAINT fk_player_data_preferences_request
+                FOREIGN KEY (current_request_id) REFERENCES data.player_data_requests(request_id) ON DELETE RESTRICT;";
         command.ExecuteNonQuery();
     }
 
@@ -671,6 +724,109 @@ public class AccountRepository
             LastPasswordChangedAt = ReadDateTime(reader, "last_password_changed_at"),
             SecurityGeneration = Convert.ToInt64(reader["security_generation"])
         };
+    }
+
+    // Retrieves the active person's credential for recent-authentication checks without accepting a username claim.
+    public PersonCredential? GetCredentialByPersonId(Guid personId)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT credentials.id, credentials.person_record_id, credentials.user_name,
+                   credentials.password_hash, credentials.must_change_password,
+                   credentials.failed_login_count, credentials.lockout_until,
+                   credentials.last_password_changed_at, credentials.security_generation
+            FROM secu.person_credentials credentials
+            JOIN idn.people people ON people.id = credentials.person_record_id
+            WHERE people.person_id = @person_id AND people.is_active;";
+        Add(command, "@person_id", personId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new PersonCredential
+        {
+            Id = ReadInt(reader, "id"), PersonRecordId = ReadInt(reader, "person_record_id"),
+            UserName = ReadString(reader, "user_name"), PasswordHash = ReadString(reader, "password_hash"),
+            MustChangePassword = ReadBool(reader, "must_change_password"),
+            FailedLoginCount = ReadInt(reader, "failed_login_count"),
+            LockoutUntil = ReadDateTime(reader, "lockout_until"),
+            LastPasswordChangedAt = ReadDateTime(reader, "last_password_changed_at"),
+            SecurityGeneration = Convert.ToInt64(reader["security_generation"])
+        };
+    }
+
+    // Returns only privacy workflow state; Account never reads or stores player statistics here.
+    public PlayerDataPrivacyStatus GetPlayerDataPrivacyStatus(Guid personId)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var preference = connection.CreateCommand();
+        preference.CommandText = @"
+            SELECT p.is_opted_out, p.current_request_id, r.status, r.requested_at
+            FROM data.player_data_preferences p
+            LEFT JOIN data.player_data_requests r ON r.request_id = p.current_request_id
+            WHERE p.person_id = @person_id;";
+        Add(preference, "@person_id", personId);
+        using var reader = preference.ExecuteReader();
+        if (!reader.Read()) return new(false, null, "not_requested", null, []);
+        var optedOut = reader.GetBoolean(0);
+        Guid? requestId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+        var status = reader.IsDBNull(2) ? "not_requested" : reader.GetString(2);
+        var requestedAt = reader.IsDBNull(3) ? null : ReadDateTime(reader, "requested_at");
+        reader.Close();
+        var targets = new List<PlayerDataPrivacyTargetStatus>();
+        if (requestId is { } id)
+        {
+            using var targetCommand = connection.CreateCommand();
+            targetCommand.CommandText = "SELECT product_type,status,completed_at FROM data.player_data_request_targets WHERE request_id=@request_id ORDER BY product_type;";
+            Add(targetCommand, "@request_id", id);
+            using var targetReader = targetCommand.ExecuteReader();
+            while (targetReader.Read()) targets.Add(new(targetReader.GetString(0), targetReader.GetString(1), targetReader.IsDBNull(2) ? null : ReadDateTime(targetReader, "completed_at")));
+        }
+        return new(optedOut, requestId, status, requestedAt, targets);
+    }
+
+    // Atomically records the preference, three required targets, pending directives, and a redacted audit event.
+    public Guid CreatePlayerDataOptOutRequest(Guid personId, DateTime now)
+    {
+        using var connection = new NpgsqlConnection(_postgresConnectionString);
+        connection.Open();
+        SetSchemaSearchPath(connection);
+        using var transaction = connection.BeginTransaction();
+        using (var existing = NewCommand(connection, transaction, "SELECT current_request_id FROM data.player_data_preferences WHERE person_id=@person_id AND is_opted_out FOR UPDATE;"))
+        {
+            Add(existing, "@person_id", personId);
+            var existingId = existing.ExecuteScalar();
+            if (existingId is Guid id) { transaction.Commit(); return id; }
+        }
+        var requestId = Guid.NewGuid();
+        using (var request = NewCommand(connection, transaction, @"
+            INSERT INTO data.player_data_requests(request_id,person_id,request_type,status,requested_at)
+            VALUES(@request_id,@person_id,'permanent_player_data_erasure','processing',@requested_at);"))
+        { Add(request,"@request_id",requestId); Add(request,"@person_id",personId); Add(request,"@requested_at",now); request.ExecuteNonQuery(); }
+        foreach (var product in new[] { ProductTypes.League, ProductTypes.Tournament, ProductTypes.PlayerProfile })
+        {
+            using var target = NewCommand(connection, transaction, "INSERT INTO data.player_data_request_targets(request_id,product_type,status) VALUES(@request_id,@product,'pending');");
+            Add(target,"@request_id",requestId); Add(target,"@product",product); target.ExecuteNonQuery();
+            using var outbox = NewCommand(connection, transaction, @"
+                INSERT INTO data.privacy_outbox(message_id,request_id,target_product,event_type,payload)
+                VALUES(@message_id,@request_id,@product,'person.player_data_erasure_requested.v1',CAST(@payload AS jsonb));");
+            Add(outbox,"@message_id",Guid.NewGuid()); Add(outbox,"@request_id",requestId); Add(outbox,"@product",product);
+            Add(outbox,"@payload",System.Text.Json.JsonSerializer.Serialize(new { requestId, personId, requestedAt = now, irreversible = true })); outbox.ExecuteNonQuery();
+        }
+        using (var preference = NewCommand(connection, transaction, @"
+            INSERT INTO data.player_data_preferences(person_id,is_opted_out,updated_at,current_request_id)
+            VALUES(@person_id,true,@updated_at,@request_id)
+            ON CONFLICT(person_id) DO UPDATE SET is_opted_out=true,updated_at=EXCLUDED.updated_at,current_request_id=EXCLUDED.current_request_id;"))
+        { Add(preference,"@person_id",personId); Add(preference,"@updated_at",now); Add(preference,"@request_id",requestId); preference.ExecuteNonQuery(); }
+        using (var audit = NewCommand(connection, transaction, @"
+            INSERT INTO data.audit_log(created_at,actor_person_id,actor_role,area,action,detail,target_type,target_id,reason,request_id,source)
+            VALUES(@now,@person_id,'person','privacy','player_data_erasure_requested','Permanent player-data erasure requested','privacy_request',@request_id,'Authenticated irreversible opt-out',@request_id,'AccountRepository');"))
+        { Add(audit,"@now",now); Add(audit,"@person_id",personId); Add(audit,"@request_id",requestId.ToString()); audit.ExecuteNonQuery(); }
+        transaction.Commit();
+        return requestId;
     }
 
     public Person? GetPersonById(int id)

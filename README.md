@@ -29,6 +29,8 @@ set, both will throw.
 
 ## Status
 
+Authenticated people can open `/Account/Privacy` from the Account home page to request irreversible player-data erasure. The Account and purchases remain active; durable, idempotent product targets are queued for League, Tournament, and Player Profile. Live signed delivery is not yet active, so requests remain visibly processing until that separately gated integration is completed. See `docs/PLAYER_DATA_PRIVACY.md`.
+
 Login, signup, and sessions are implemented and wired to real cookie
 authentication -- this is a working auth loop, not a stub. Identity token
 issuance (JWT, RS256) is implemented with a published verification key at
