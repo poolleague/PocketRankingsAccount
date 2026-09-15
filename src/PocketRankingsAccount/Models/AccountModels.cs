@@ -155,3 +155,21 @@ public class AccountAuditLogEntry
     public string RequestId { get; set; } = "";
     public string Source { get; set; } = "";
 }
+
+// Represents the Account-owned preference without copying any Player Profile domain data.
+public sealed record PlayerDataPrivacyStatus(
+    bool IsOptedOut,
+    Guid? RequestId,
+    string Status,
+    DateTime? RequestedAt,
+    IReadOnlyList<PlayerDataPrivacyTargetStatus> Targets);
+
+// Exposes per-product completion so a partial destructive request is never shown as complete.
+public sealed record PlayerDataPrivacyTargetStatus(string ProductType, string Status, DateTime? CompletedAt);
+
+// Captures the irreversible confirmation and password without persisting either value.
+public sealed class PlayerDataOptOutInput
+{
+    public string CurrentPassword { get; set; } = "";
+    public bool ConfirmPermanentDeletion { get; set; }
+}

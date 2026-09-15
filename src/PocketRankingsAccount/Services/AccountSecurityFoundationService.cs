@@ -24,7 +24,7 @@ public readonly record struct SignupResult(SignupStatus Status, string? Error, P
 // product. Every design choice there (RS256, 5-minute lifetime, ephemeral
 // key fallback) is this file's own, not a mirror of existing code, and is
 // commented as such.
-public sealed class AccountSecurityFoundationService
+public sealed class AccountSecurityFoundationService : IRecentPasswordVerifier
 {
     // The cookie only needs to carry the raw session handle. Unlike
     // League's cookie (which also carries accountId + securityGeneration
@@ -106,6 +106,17 @@ public sealed class AccountSecurityFoundationService
 
     public bool IsConfigured => _hashKey is not null;
     public bool IsUsingEphemeralSigningKey => _signingKeyIsEphemeral;
+
+    // Confirms the durable Account identity without exposing whether a credential exists to anonymous callers.
+    public bool PersonExists(Guid personId) => _repository.GetPersonByPersonId(personId) is { IsActive: true };
+
+    // Reauthenticates a signed-in person for an irreversible privacy action without creating a new session.
+    public bool VerifyCurrentPassword(Guid personId, string password)
+    {
+        if (string.IsNullOrEmpty(password)) return false;
+        var credential = _repository.GetCredentialByPersonId(personId);
+        return credential is not null && PasswordService.Verify(password, credential.PasswordHash);
+    }
 
     // ---- Signup ----------------------------------------------------
 

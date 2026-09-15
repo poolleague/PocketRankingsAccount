@@ -1,0 +1,9 @@
+# Account Database Layout
+
+Account owns identity, credentials, sessions, entitlements, and privacy-request orchestration only. It does not store brackets, score sheets, league operations, achievements, or player statistics.
+
+Version 0.3.0 adds `data.player_data_preferences`, `data.player_data_requests`, `data.player_data_request_targets`, and `data.privacy_outbox`. One irreversible request creates three idempotent targets—League, Tournament, and Player Profile—in the same transaction. Only one processing request is allowed per person; a future fresh opt-in can later create a new request without rewriting the completed receipt. The outbox payload contains the Account-owned `PersonId` only because each isolated product needs it to locate and then erase or unlink its own data. Logs and public responses must never expose that payload.
+
+Version 0.4.0 adds `data.product_installations`, `data.product_lifecycle_history`, and the append-only `data.reject_lifecycle_history_mutation()` trigger. The registry records one League or Tournament purchase installation, its opaque installation key, current lifecycle state, immediate access-disable time, exact 61-day deletion due time, legal-hold state/reason, and deletion completion. Lifecycle history records every state transition and reason without storing customer operational data. The schema is orchestration evidence only; each product database, stack, credentials, storage, and backups remain isolated.
+
+Rollback may remove runtime code but must not delete opted-out preferences, requests, targets, undelivered messages, installation records, or lifecycle evidence. A restored database must replay completed privacy directives before accepting normal projection traffic. Provider deletion is forward-recovery only and cannot be represented as complete until separately implemented verification proves the stack, database, storage, and expired backups are gone.

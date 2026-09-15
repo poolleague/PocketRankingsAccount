@@ -2,6 +2,8 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using PocketRankingsAccount.Models;
 using PocketRankingsAccount.Services;
 
 namespace PocketRankingsAccount.Controllers;
@@ -25,10 +27,14 @@ public class SignupViewModel
 public class AccountController : Controller
 {
     private readonly AccountSecurityFoundationService _security;
+    private readonly PlayerDataPrivacyService _privacy;
+    private readonly IPlayerDataPrivacyStore _privacyStore;
 
-    public AccountController(AccountSecurityFoundationService security)
+    public AccountController(AccountSecurityFoundationService security, PlayerDataPrivacyService privacy, IPlayerDataPrivacyStore privacyStore)
     {
         _security = security;
+        _privacy = privacy;
+        _privacyStore = privacyStore;
     }
 
     [HttpGet]
@@ -123,4 +129,34 @@ public class AccountController : Controller
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return RedirectToAction("Index", "Home");
     }
+
+    // Shows the signed-in person's privacy state without exposing another person's request identifier.
+    [Authorize]
+    [HttpGet]
+    public IActionResult Privacy()
+    {
+        return TryGetPersonId(out var personId)
+            ? View(_privacyStore.GetPlayerDataPrivacyStatus(personId))
+            : Challenge();
+    }
+
+    // Requires password reauthentication and an explicit irreversible confirmation before queuing erasure.
+    [Authorize]
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public IActionResult OptOutPlayerData(PlayerDataOptOutInput input)
+    {
+        if (!TryGetPersonId(out var personId)) return Challenge();
+        var result = _privacy.RequestOptOut(personId, input, DateTime.UtcNow, out _);
+        if (result is PlayerDataOptOutResult.Accepted or PlayerDataOptOutResult.AlreadyRequested)
+            return RedirectToAction(nameof(Privacy));
+        ModelState.AddModelError("", result == PlayerDataOptOutResult.ConfirmationRequired
+            ? "You must confirm that permanent deletion cannot be reversed."
+            : "The current password was not accepted.");
+        ViewBag.Input = input;
+        return View("Privacy", _privacyStore.GetPlayerDataPrivacyStatus(personId));
+    }
+
+    // Trusts only the authenticated NameIdentifier claim established by Account's validated session.
+    private bool TryGetPersonId(out Guid personId) => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out personId);
 }

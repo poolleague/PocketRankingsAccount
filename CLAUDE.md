@@ -89,13 +89,11 @@ Still not implemented, each its own runtime-code phase requiring proposal
 
 Build-verified as of 2026-08-29: `dotnet build src/PocketRankingsAccount/PocketRankingsAccount.csproj -c Release` succeeds clean, 0 warnings/0 errors. (An earlier session's "no .NET SDK available" note is stale -- a later session installed .NET 8 in its environment and confirmed the build.)
 
-No automated test project exists yet -- `tests/PocketRankingsAccount.Tests/`
-holds only a `.gitkeep` placeholder, unlike PoolLeagueWeb's populated
-`tests/PoolLeagueWeb.Tests`. Password hashing and the keyed-hash/session
-pattern were matched line-by-line against `PoolLeagueWeb`'s working code
-during review, not verified by a runnable test; identity token issuance has
-no such precedent to check against at all. A real `docker compose up` +
-manual signup/login walkthrough, and a real automated test project, are
-still owed before this is trusted with real credentials -- a clean compile
-confirms the code is well-formed, not that the auth/token logic behaves
-correctly at runtime.
+## Player data privacy
+
+Authenticated permanent player-data opt-out is implemented at `/Account/Privacy`. It requires the current password and explicit irreversible confirmation, retains the Account and entitlements, and atomically creates product targets plus outbox records. A short-lived purpose/audience/installation-bound signer exists, but live delivery and acknowledgements remain unactivated; never present a queued request as completed. The installation lifecycle state machine is provider-neutral and must not claim infrastructure deletion until a separately approved executor verifies every isolated resource and expired backup is gone. Read `docs/PLAYER_DATA_PRIVACY.md` before changing this flow.
+
+The automated test project now covers privacy policy/service behavior and source
+contracts. The broader login, session, and identity-token paths still need dedicated
+automated and PostgreSQL integration coverage plus a real Compose walkthrough before
+Production use.

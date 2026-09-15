@@ -1,0 +1,7 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Pocket Rankings Account</title>
+<style>body{font-family:system-ui,sans-serif;margin:0;background:#f5f4ef;color:#16231d}main{max-width:760px;margin:0 auto;padding:clamp(1rem,5vw,3rem)}section{background:#fff;border:1px solid #d7ddd8;border-radius:14px;padding:clamp(1.2rem,4vw,2.2rem)}a{display:inline-block;color:#176243;font-weight:700;margin:.4rem 1rem .4rem 0;min-height:44px;line-height:44px}button{min-height:44px}</style></head>
+<body><main><section><p>Pocket Rankings</p><h1>Your Account</h1><p>Your Account keeps sign-in and product access separate from League, Tournament, and Player Profile data.</p>
+@if(User.Identity?.IsAuthenticated == true){<a asp-controller="Account" asp-action="Privacy">Privacy &amp; player data</a><form asp-controller="Account" asp-action="Logout" method="post" style="display:inline">@Html.AntiForgeryToken()<button type="submit">Sign out</button></form>}
+else{<a asp-controller="Account" asp-action="Login">Sign in</a><a asp-controller="Account" asp-action="Signup">Create account</a>}
+</section></main></body></html>
