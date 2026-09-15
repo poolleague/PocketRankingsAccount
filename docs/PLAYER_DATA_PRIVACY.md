@@ -4,7 +4,7 @@ Version 0.3.0 adds an authenticated Account page for permanent player-data erasu
 
 The request requires the current password, CSRF protection, and an explicit irreversible confirmation. Account stores no statistics; it creates a durable request, one target each for League, Tournament, and Player Profile, and an idempotent pending outbox message in the same transaction.
 
-The UI reports processing until every product acknowledges completion. Live signed delivery is not activated in this repository phase because the durable Account signing/rollover contract and League consumer remain separately gated. No partial request may be presented as complete.
+The UI reports processing until every product acknowledges completion. Version 0.4.0 adds a two-minute RS256 directive containing fixed issuer, purpose, exact product audience, installation key, request ID, PersonId, issue/expiry times, and a fresh token ID for each attempt. The usable token is never persisted. Live dispatch is still disabled: the exact private Tournament and Player Profile destinations, key distribution/rotation, acknowledgement persistence, retries, alerts, and the separately owned League consumer remain gated. No partial request may be presented as complete.
 
 Database objects introduced in 0.3.0:
 

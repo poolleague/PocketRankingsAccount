@@ -37,6 +37,8 @@ builder.Services.AddSingleton<AccountSecurityFoundationService>();
 builder.Services.AddSingleton<IPlayerDataPrivacyStore>(services => services.GetRequiredService<AccountRepository>());
 builder.Services.AddSingleton<IRecentPasswordVerifier>(services => services.GetRequiredService<AccountSecurityFoundationService>());
 builder.Services.AddSingleton<PlayerDataPrivacyService>();
+builder.Services.AddSingleton<PrivacyDirectiveSigner>();
+builder.Services.AddSingleton<CustomerProductLifecycleService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

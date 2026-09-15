@@ -91,7 +91,7 @@ Build-verified as of 2026-08-29: `dotnet build src/PocketRankingsAccount/PocketR
 
 ## Player data privacy
 
-Authenticated permanent player-data opt-out is implemented at `/Account/Privacy`. It requires the current password and explicit irreversible confirmation, retains the Account and entitlements, and atomically creates product targets plus outbox records. Live signed delivery and acknowledgements remain unactivated; never present a queued request as completed. Read `docs/PLAYER_DATA_PRIVACY.md` before changing this flow.
+Authenticated permanent player-data opt-out is implemented at `/Account/Privacy`. It requires the current password and explicit irreversible confirmation, retains the Account and entitlements, and atomically creates product targets plus outbox records. A short-lived purpose/audience/installation-bound signer exists, but live delivery and acknowledgements remain unactivated; never present a queued request as completed. The installation lifecycle state machine is provider-neutral and must not claim infrastructure deletion until a separately approved executor verifies every isolated resource and expired backup is gone. Read `docs/PLAYER_DATA_PRIVACY.md` before changing this flow.
 
 The automated test project now covers privacy policy/service behavior and source
 contracts. The broader login, session, and identity-token paths still need dedicated

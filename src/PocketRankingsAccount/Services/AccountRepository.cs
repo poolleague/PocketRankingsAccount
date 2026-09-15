@@ -222,6 +222,40 @@ public class AccountRepository : IPlayerDataPrivacyStore
                 UNIQUE (request_id, target_product)
             );
 
+            CREATE TABLE IF NOT EXISTS data.product_installations
+            (
+                installation_id uuid PRIMARY KEY,
+                owner_person_id uuid NOT NULL REFERENCES idn.people(person_id) ON DELETE RESTRICT,
+                product_type text NOT NULL CHECK (product_type IN ('league','tournament')),
+                installation_key text NOT NULL CHECK (length(installation_key) BETWEEN 3 AND 160),
+                lifecycle_status text NOT NULL CHECK (lifecycle_status IN ('purchase_confirmed','entitlement_recorded','provisioning_queued','infrastructure_created','migrating','validating','ready','access_disabled','retention_61_days','deletion_due','deleting','deleted','needs_attention')),
+                access_disabled_at timestamp with time zone NULL,
+                deletion_due_at timestamp with time zone NULL,
+                deleted_at timestamp with time zone NULL,
+                legal_hold_active boolean NOT NULL DEFAULT false,
+                legal_hold_reason text NOT NULL DEFAULT '',
+                created_at timestamp with time zone NOT NULL DEFAULT NOW(),
+                updated_at timestamp with time zone NOT NULL DEFAULT NOW(),
+                UNIQUE(product_type,installation_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS data.product_lifecycle_history
+            (
+                lifecycle_history_id uuid PRIMARY KEY,
+                installation_id uuid NOT NULL REFERENCES data.product_installations(installation_id) ON DELETE RESTRICT,
+                from_status text NULL,
+                to_status text NOT NULL,
+                reason_code text NOT NULL,
+                occurred_at timestamp with time zone NOT NULL,
+                request_id uuid NOT NULL UNIQUE
+            );
+
+            CREATE OR REPLACE FUNCTION data.reject_lifecycle_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'Product lifecycle history is append-only'; END; $$;
+            DROP TRIGGER IF EXISTS product_lifecycle_history_append_only ON data.product_lifecycle_history;
+            CREATE TRIGGER product_lifecycle_history_append_only BEFORE UPDATE OR DELETE ON data.product_lifecycle_history
+            FOR EACH ROW EXECUTE FUNCTION data.reject_lifecycle_history_mutation();
+
             ALTER TABLE data.player_data_preferences
                 DROP CONSTRAINT IF EXISTS fk_player_data_preferences_request;
             ALTER TABLE data.player_data_preferences

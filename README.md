@@ -29,12 +29,15 @@ set, both will throw.
 
 ## Status
 
-Authenticated people can open `/Account/Privacy` from the Account home page to request irreversible player-data erasure. The Account and purchases remain active; durable, idempotent product targets are queued for League, Tournament, and Player Profile. Live signed delivery is not yet active, so requests remain visibly processing until that separately gated integration is completed. See `docs/PLAYER_DATA_PRIVACY.md`.
+Authenticated people can open `/Account/Privacy` from the Account home page to request irreversible player-data erasure. The Account and purchases remain active; durable, idempotent product targets are queued for League, Tournament, and Player Profile. A two-minute RS256, purpose/audience/installation-bound directive signer now defines the machine contract, but outbound network delivery remains disabled until exact non-League destinations are approved. Requests therefore remain visibly processing. See `docs/PLAYER_DATA_PRIVACY.md`.
+
+The Account database also defines the provider-neutral League/Tournament installation registry and append-only lifecycle history. The tested state machine separates purchase, entitlement, queued provisioning, infrastructure, migration, validation, readiness, immediate cancellation lockout, 61-day retention, legal hold, and evidenced deletion. It does not call a cloud provider or delete infrastructure yet.
 
 Login, signup, and sessions are implemented and wired to real cookie
 authentication -- this is a working auth loop, not a stub. Identity token
 issuance (JWT, RS256) is implemented with a published verification key at
-`/.well-known/jwks.json`, though no other product verifies one yet.
+`/.well-known/jwks.json`. Tournament and Player Profile now contain separate,
+disabled-by-default verification receivers for the privacy directive contract.
 
 Deliberately narrower than PoolLeagueWeb's SecurityFoundationService: no
 IP-based abuse rate-limiting, no password recovery (needs email sending,
